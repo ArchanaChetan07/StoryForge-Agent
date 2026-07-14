@@ -8,10 +8,12 @@ StoryForge takes any topic, fetches the latest web results via Tavily, and uses 
 
 ## Features
 
-- **Live web search** — Tavily pulls fresh results so your content is never stale
-- **AI research brief** — Gemini synthesises sources into a sharp, 200-word summary
-- **Video script generation** — one click turns the brief into a punchy short-form script
-- **MCP server** — exposes `research_topic` and `create_video_script` as tools for Claude Desktop
+- **Planning agent** — plan → search → observe → revise thin queries → brief → (HITL) → script
+- **Live web search** — Tavily pulls fresh results (stubbed in `DEMO_MODE`)
+- **AI research brief** — Gemini synthesises sources into a sharp summary (stubbed offline)
+- **Optional HITL** — approve the brief before script generation
+- **Trace spans** — each run records tool spans for debugging
+- **MCP server** — wraps the agent (`run_storyforge_agent`, `research_topic`, `create_video_script`)
 
 ---
 
@@ -58,12 +60,16 @@ mcp install mcp_server.py
 
 ```
 storyforge-agent/
-├── app.py              # Streamlit UI
-├── mcp_server.py       # MCP tool server
+├── app.py              # Streamlit UI (HITL + agent loop)
+├── mcp_server.py       # MCP tools wrapping the agent
+├── agent/              # plan → tool → observe → revise
 ├── utils/
-│   ├── search.py       # Tavily search wrapper
-│   ├── generator.py    # Gemini generation wrapper
-│   └── styles.py       # UI CSS
+│   ├── search.py       # Tavily (+ DEMO stubs)
+│   ├── generator.py    # Gemini (+ DEMO stubs)
+│   ├── config.py
+│   ├── tracing.py
+│   └── styles.py
+├── tests/
 ├── requirements.txt
 ├── .env.example
 └── .gitignore
@@ -75,8 +81,10 @@ storyforge-agent/
 
 | Variable | Description |
 |----------|-------------|
+| `DEMO_MODE` | `1` forces stub Tavily/Gemini (also auto when keys missing) |
 | `GEMINI_API_KEY` | Google AI Studio API key |
 | `TAVILY_API_KEY` | Tavily search API key |
+| `HITL_ENABLED` | Optional approve-before-script in the UI (`1` default) |
 
 Get your keys at [aistudio.google.com](https://aistudio.google.com) and [tavily.com](https://tavily.com).
 

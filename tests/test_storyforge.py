@@ -1,54 +1,46 @@
-import pytest
-import re
+"""StoryForge unit tests — stub search/generator + MCP tool surface (offline)."""
 
-class TestStoryForge:
-    def test_story_structure(self):
-        story = {"title": "The Lost Key", "genre": "Mystery", "chapters": [], "characters": []}
-        assert "title" in story and "genre" in story
+from agent.tools import TOOLS, call_tool, revise_query
+from utils.generator import generate_summary, generate_video_script
+from utils.search import fetch_realtime_info
 
-    def test_character_creation(self):
-        character = {"name": "Alice", "role": "protagonist", "traits": ["brave","curious"]}
-        assert "name" in character and "role" in character
-        assert len(character["traits"]) > 0
 
-    def test_genre_options(self):
-        genres = ["Fantasy","Mystery","Romance","Sci-Fi","Horror","Adventure"]
-        assert len(genres) >= 5
-        assert "Fantasy" in genres
+class TestSearchAndGenerate:
+    def test_stub_search_structure(self):
+        sources, raw_text, err = fetch_realtime_info("AI chips", api_key="")
+        assert err is None
+        assert sources
+        assert all("title" in s and "url" in s for s in sources)
+        assert raw_text
 
-    def test_chapter_appended(self):
-        story = {"chapters": []}
-        story["chapters"].append({"number": 1, "content": "Once upon a time..."})
-        assert len(story["chapters"]) == 1
+    def test_stub_summary_and_script(self):
+        _, raw, _ = fetch_realtime_info("climate tech", api_key="")
+        summary, err = generate_summary("climate tech", raw, api_key="")
+        assert err is None and summary
+        script, err2 = generate_video_script(summary, api_key="")
+        assert err2 is None and script
+        assert "Follow" in script or "follow" in script.lower()
 
-    def test_word_count_tracker(self):
-        text = "Once upon a time in a land far away there lived a brave knight"
-        count = len(text.split())
-        assert count > 0
+    def test_empty_raw_text_rejected(self):
+        text, err = generate_summary("x", "", api_key="")
+        assert text == "" and err
 
-    def test_plot_twist_insertion(self):
-        plot = ["Hero sets out", "Hero meets ally", "Hero faces villain"]
-        plot.insert(2, "Ally betrays hero")
-        assert "Ally betrays hero" in plot
-        assert len(plot) == 4
+    def test_empty_summary_rejected(self):
+        text, err = generate_video_script("", api_key="")
+        assert text == "" and err
 
-    def test_empty_prompt_rejected(self):
-        def generate(prompt):
-            if not prompt or not prompt.strip():
-                raise ValueError("Story prompt cannot be empty")
-            return f"Story about: {prompt}"
-        with pytest.raises(ValueError):
-            generate("")
 
-class TestMCPStoryServer:
-    def test_tool_definition(self):
-        tool = {"name": "generate_story", "description": "Generate a creative story", "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}}
-        assert tool["name"] == "generate_story"
-        assert "prompt" in tool["input_schema"]["properties"]
+class TestTools:
+    def test_tool_registry(self):
+        assert "search_web" in TOOLS
+        assert "generate_brief" in TOOLS
+        assert "generate_script" in TOOLS
 
-    def test_response_contains_story(self):
-        def mock_generate(prompt):
-            return {"story": f"A tale about {prompt}", "word_count": 42}
-        result = mock_generate("a dragon")
-        assert "story" in result
-        assert result["word_count"] > 0
+    def test_revise_query_broadens(self):
+        revised = revise_query("solid state batteries", "Only 0 sources; broaden")
+        assert "latest" in revised.lower() or "news" in revised.lower()
+
+    def test_call_search_tool(self):
+        data = call_tool("search_web", query="fusion energy")
+        assert data["sources"]
+        assert data["raw_text"]

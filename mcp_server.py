@@ -1,29 +1,31 @@
 """
 StoryForge MCP Server
-Exposes research and script-generation tools via the Model Context Protocol.
+Exposes research / script tools and the full planning-agent entrypoint.
 
 Usage:
-    mcp dev mcp_server.py        # development inspector
-    mcp install mcp_server.py    # install for Claude Desktop
+    mcp dev mcp_server.py
+    mcp install mcp_server.py
 """
 
-import os
+from __future__ import annotations
+
+import asyncio
+
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-from utils.search import fetch_realtime_info
+from agent.loop import run_planning_loop
+from utils.config import DEMO_MODE, GEMINI_API_KEY, TAVILY_API_KEY
 from utils.generator import generate_summary, generate_video_script
+from utils.search import fetch_realtime_info
 
 load_dotenv()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 mcp = FastMCP(
     name="StoryForge",
     description=(
-        "Fetches real-time web information on any topic and generates "
-        "AI-powered research briefs and short-form video scripts."
+        "Planning agent: search → observe → revise thin results → research brief → "
+        "optional HITL → short-form video script. Demo stubs when keys are missing."
     ),
 )
 
@@ -31,61 +33,88 @@ mcp = FastMCP(
 @mcp.tool()
 async def research_topic(query: str) -> str:
     """
-    Search the web for *query* and return an AI-generated research brief (≈200 words).
+    Run research phase (search + revise-if-thin + brief) and return the brief text.
 
     Args:
-        query: The topic or question to research.
-
-    Returns:
-        A concise, factual summary with key developments and trends.
+        query: Topic or question to research.
     """
-    sources, raw_text, search_err = fetch_realtime_info(
-        query=query, api_key=TAVILY_API_KEY
-    )
-    if search_err:
-        return f"Search error: {search_err}"
-    if not sources:
-        return f"No results found for '{query}'."
+    def _run() -> str:
+        result = run_planning_loop(query, auto_approve=False)
+        if result.state.brief:
+            return result.state.brief
+        return result.message or f"Research failed for '{query}'."
 
-    summary, gen_err = generate_summary(
-        query=query, raw_text=raw_text, api_key=GEMINI_API_KEY
-    )
-    if gen_err:
-        return f"Summary error: {gen_err}"
-    return summary
+    return await asyncio.to_thread(_run)
 
 
 @mcp.tool()
 async def create_video_script(query: str) -> str:
     """
-    Research *query* and return a ready-to-shoot 30-second video script
-    for YouTube Shorts or Instagram Reels.
+    Full agent loop with auto-approve: research → brief → script.
 
     Args:
-        query: The topic or question to turn into a video script.
-
-    Returns:
-        A punchy, hook-led script (≈110 words) with a call-to-action.
+        query: Topic to turn into a video script.
     """
-    sources, raw_text, search_err = fetch_realtime_info(
-        query=query, api_key=TAVILY_API_KEY
-    )
-    if search_err:
-        return f"Search error: {search_err}"
+    def _run() -> str:
+        result = run_planning_loop(query, auto_approve=True)
+        if result.state.script:
+            return result.state.script
+        return result.message or f"Script failed for '{query}'."
+
+    return await asyncio.to_thread(_run)
+
+
+@mcp.tool()
+async def run_storyforge_agent(query: str, auto_approve: bool = True) -> dict:
+    """
+    Run the plan→search→observe→revise→brief→(HITL)→script agent.
+
+    For unattended MCP use, keep auto_approve=True.
+    """
+    def _run() -> dict:
+        result = run_planning_loop(query, auto_approve=auto_approve)
+        return {
+            "status": result.status,
+            "awaiting_approval": result.awaiting_approval,
+            "demo_mode": DEMO_MODE,
+            "topic": result.state.topic,
+            "search_query": result.state.search_query,
+            "brief": result.state.brief,
+            "script": result.state.script,
+            "sources": result.state.sources,
+            "revisions": result.state.revisions,
+            "trace": result.trace.to_dict(),
+        }
+
+    return await asyncio.to_thread(_run)
+
+
+@mcp.tool()
+async def search_only(query: str) -> str:
+    """Low-level web search (Tavily or demo stub). Returns concatenated snippets."""
+    sources, raw_text, err = fetch_realtime_info(query=query, api_key=TAVILY_API_KEY)
+    if err:
+        return f"Search error: {err}"
     if not sources:
-        return f"No results found for '{query}'."
+        return f"No results for '{query}'."
+    return raw_text
 
-    summary, sum_err = generate_summary(
-        query=query, raw_text=raw_text, api_key=GEMINI_API_KEY
-    )
-    if sum_err:
-        return f"Summary error: {sum_err}"
 
-    script, script_err = generate_video_script(
-        summary=summary, api_key=GEMINI_API_KEY
-    )
-    if script_err:
-        return f"Script error: {script_err}"
+@mcp.tool()
+async def summarize_only(query: str, raw_text: str) -> str:
+    """Low-level brief generation from provided raw text."""
+    summary, err = generate_summary(query=query, raw_text=raw_text, api_key=GEMINI_API_KEY)
+    if err:
+        return f"Summary error: {err}"
+    return summary
+
+
+@mcp.tool()
+async def script_only(summary: str) -> str:
+    """Low-level script generation from a research brief."""
+    script, err = generate_video_script(summary=summary, api_key=GEMINI_API_KEY)
+    if err:
+        return f"Script error: {err}"
     return script
 
 

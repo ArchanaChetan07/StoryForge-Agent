@@ -1,22 +1,19 @@
 """
-StoryForge Agent — Main Streamlit Application
-Fetches real-time information and generates AI-powered summaries and video scripts.
+StoryForge Agent — Streamlit UI
+Planning agent: search → observe → revise → brief → HITL → script.
 """
 
+from __future__ import annotations
+
 import streamlit as st
-import os
 from dotenv import load_dotenv
 
-from utils.search import fetch_realtime_info
-from utils.generator import generate_summary, generate_video_script
+from agent.hitl import apply_approval, request_script_approval
+from agent.loop import run_research_phase, run_script_phase
+from utils.config import DEMO_MODE, HITL_ENABLED
 from utils.styles import inject_styles
 
-# ─── Configuration ───────────────────────────────────────────────────────────
-
 load_dotenv()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 st.set_page_config(
     page_title="StoryForge",
@@ -28,27 +25,7 @@ st.set_page_config(
 inject_styles()
 
 
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-
-def validate_env() -> bool:
-    """Return True if required API keys are present."""
-    missing = []
-    if not GEMINI_API_KEY:
-        missing.append("GEMINI_API_KEY")
-    if not TAVILY_API_KEY:
-        missing.append("TAVILY_API_KEY")
-    if missing:
-        st.error(
-            f"Missing environment variables: **{', '.join(missing)}**\n\n"
-            "Add them to your `.env` file and restart the app.",
-            icon="🔑",
-        )
-        return False
-    return True
-
-
 def render_source_cards(sources: list[dict]) -> None:
-    """Render individual source reference cards."""
     if not sources:
         return
     st.markdown("<p class='section-label'>SOURCES</p>", unsafe_allow_html=True)
@@ -67,28 +44,24 @@ def render_source_cards(sources: list[dict]) -> None:
         )
 
 
-# ─── Main UI ─────────────────────────────────────────────────────────────────
-
 def main() -> None:
-    if not validate_env():
-        st.stop()
-
-    # Header
     st.markdown(
         """
         <div class="hero">
             <div class="hero-badge">LIVE INTELLIGENCE</div>
             <h1 class="hero-title">StoryForge</h1>
             <p class="hero-sub">
-                Enter any topic. Get a research brief and a ready-to-shoot video script — 
-                powered by live web search and Gemini AI.
+                Enter any topic. The agent plans research, revises thin searches,
+                writes a brief, then — after optional approval — a ready-to-shoot script.
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Search input
+    if DEMO_MODE:
+        st.info("Running in **DEMO_MODE** (missing keys or DEMO_MODE=1). Using stub search & generation.")
+
     st.markdown("<div class='search-wrap'>", unsafe_allow_html=True)
     query = st.text_input(
         label="search",
@@ -108,73 +81,85 @@ def main() -> None:
         )
         return
 
-    # ── Step 1: Fetch sources ────────────────────────────────────────────────
-    with st.spinner("Searching the web…"):
-        sources, raw_text, search_error = fetch_realtime_info(
-            query=query, api_key=TAVILY_API_KEY
-        )
+    if "last_query" not in st.session_state or st.session_state["last_query"] != query:
+        st.session_state.pop("agent_research", None)
+        st.session_state.pop("agent_script", None)
+        st.session_state["last_query"] = query
 
-    if search_error:
-        st.error(f"Search failed: {search_error}", icon="🔍")
+    if "agent_research" not in st.session_state:
+        with st.spinner("Agent researching (plan → search → revise if thin → brief)…"):
+            st.session_state["agent_research"] = run_research_phase(query)
+
+    research = st.session_state["agent_research"]
+    state = research.state
+
+    if not state.brief:
+        st.error(research.message or "Research failed.", icon="🔍")
+        if research.trace.spans:
+            with st.expander("Trace"):
+                st.json(research.trace.to_dict())
         return
 
-    if not sources:
-        st.warning(
-            "No results found for that query. Try rephrasing or broadening your search.",
-            icon="🔎",
-        )
-        return
-
-    # ── Step 2: Generate summary ─────────────────────────────────────────────
-    with st.spinner("Writing your research brief…"):
-        summary, summary_error = generate_summary(
-            query=query, raw_text=raw_text, api_key=GEMINI_API_KEY
-        )
-
-    if summary_error:
-        st.error(f"Summary generation failed: {summary_error}", icon="⚡")
-        return
-
-    # ── Render summary ───────────────────────────────────────────────────────
     st.markdown("<div class='result-block'>", unsafe_allow_html=True)
     st.markdown("<p class='section-label'>RESEARCH BRIEF</p>", unsafe_allow_html=True)
-    st.markdown(f"<div class='summary-text'>{summary}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='summary-text'>{state.brief}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    render_source_cards(sources)
+    render_source_cards(state.sources)
 
-    # ── Step 3: Optional video script ────────────────────────────────────────
+    if research.extras.get("revisions"):
+        st.caption(
+            f"Query revised once after thin results → `{research.extras.get('search_query')}`"
+        )
+
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
     st.markdown("<p class='section-label'>VIDEO SCRIPT</p>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='section-desc'>Turn this brief into a punchy 30-second script for Reels or Shorts.</p>",
-        unsafe_allow_html=True,
-    )
 
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        generate_btn = st.button("Generate script →", type="primary", use_container_width=True)
+    if HITL_ENABLED and "agent_script" not in st.session_state:
+        approval = request_script_approval(state.brief)
+        st.markdown(
+            "<p class='section-desc'>HITL — approve before the agent spends a generation step on the script.</p>",
+            unsafe_allow_html=True,
+        )
+        st.write(approval.message)
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            approve = st.button("Approve script →", type="primary", use_container_width=True)
+        with col2:
+            skip = st.button("Skip script", use_container_width=True)
+        if skip:
+            st.info("Script skipped. Edit the topic or re-run to continue.")
+            with st.expander("Trace"):
+                st.json(research.trace.to_dict())
+            return
+        if not approve:
+            with st.expander("Trace"):
+                st.json(research.trace.to_dict())
+            return
+        if not apply_approval(True):
+            return
+        state.approved = True
+        with st.spinner("Writing your video script…"):
+            st.session_state["agent_script"] = run_script_phase(
+                state, previous_trace=research.trace
+            )
+    elif "agent_script" not in st.session_state:
+        # HITL disabled — auto-approve
+        state.approved = True
+        with st.spinner("Writing your video script…"):
+            st.session_state["agent_script"] = run_script_phase(
+                state, previous_trace=research.trace
+            )
 
-    if generate_btn or st.session_state.get("script_generated"):
-        if not st.session_state.get("script_generated"):
-            with st.spinner("Writing your video script…"):
-                script, script_error = generate_video_script(
-                    summary=summary, api_key=GEMINI_API_KEY
-                )
-
-            if script_error:
-                st.error(f"Script generation failed: {script_error}", icon="🎬")
-                return
-
-            st.session_state["current_script"] = script
-            st.session_state["script_generated"] = True
-        else:
-            script = st.session_state.get("current_script", "")
+    script_result = st.session_state.get("agent_script")
+    if script_result:
+        script = script_result.state.script
+        if not script:
+            st.error(script_result.message or "Script generation failed.", icon="🎬")
+            return
 
         st.markdown("<div class='script-block'>", unsafe_allow_html=True)
-        st.markdown(
-            f"<div class='script-text'>{script}</div>", unsafe_allow_html=True
-        )
+        st.markdown(f"<div class='script-text'>{script}</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
         col_a, col_b = st.columns([1, 3])
@@ -188,21 +173,16 @@ def main() -> None:
             )
         with col_b:
             if st.button("Regenerate", use_container_width=True):
-                st.session_state.pop("current_script", None)
-                st.session_state.pop("script_generated", None)
+                st.session_state.pop("agent_script", None)
                 st.rerun()
 
-    # Reset script state when query changes
-    if "last_query" not in st.session_state or st.session_state["last_query"] != query:
-        st.session_state.pop("current_script", None)
-        st.session_state.pop("script_generated", None)
-        st.session_state["last_query"] = query
+        with st.expander("Trace"):
+            st.json(script_result.trace.to_dict())
 
-    # Footer
     st.markdown(
         """
         <div class='footer'>
-            StoryForge · Powered by Gemini &amp; Tavily
+            StoryForge · Planning agent · Gemini &amp; Tavily
         </div>
         """,
         unsafe_allow_html=True,

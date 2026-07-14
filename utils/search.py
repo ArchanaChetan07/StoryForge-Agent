@@ -1,16 +1,60 @@
 """
 Search utility — wraps Tavily to fetch live web results.
 Returns structured source data and raw text for downstream summarisation.
+Includes DEMO_MODE stubs when Tavily key is missing.
 """
 
 from __future__ import annotations
+
 from typing import Optional
-from tavily import TavilyClient
+
+from utils.config import DEMO_MODE, TAVILY_API_KEY
+
+
+def _stub_results(query: str, max_results: int = 4) -> tuple[list[dict], str, None]:
+    """Offline stub sources so demos/tests work without Tavily."""
+    q = (query or "topic").strip() or "topic"
+    sources = [
+        {
+            "title": f"{q.title()} — key development",
+            "url": "https://example.com/storyforge/demo/1",
+            "snippet": (
+                f"Recent reporting on {q} highlights accelerating progress, "
+                "new funding rounds, and expanding public interest across markets."
+            ),
+        },
+        {
+            "title": f"Analysis: what {q} means next",
+            "url": "https://example.com/storyforge/demo/2",
+            "snippet": (
+                f"Experts tracking {q} point to measurable gains this year, "
+                "naming leading labs and citing early deployment data."
+            ),
+        },
+        {
+            "title": f"{q.title()} timeline and figures",
+            "url": "https://example.com/storyforge/demo/3",
+            "snippet": (
+                f"A brief timeline of {q} includes major announcements, "
+                "regulatory notes, and a look ahead for the next quarter."
+            ),
+        },
+        {
+            "title": f"Community take on {q}",
+            "url": "https://example.com/storyforge/demo/4",
+            "snippet": (
+                f"Creators and analysts summarizing {q} for general audiences, "
+                "with clear takeaways and what to watch next."
+            ),
+        },
+    ][:max_results]
+    chunks = [f"[{s['title']}]\n{s['snippet']}" for s in sources]
+    return sources, "\n\n".join(chunks), None
 
 
 def fetch_realtime_info(
     query: str,
-    api_key: str,
+    api_key: str | None = None,
     max_results: int = 4,
 ) -> tuple[list[dict], str, Optional[str]]:
     """
@@ -25,11 +69,15 @@ def fetch_realtime_info(
     error : str | None
         Error message if the call failed, else None.
     """
-    if not api_key:
-        return [], "", "TAVILY_API_KEY is not set."
+    key = (api_key if api_key is not None else TAVILY_API_KEY) or ""
+
+    if DEMO_MODE or not key:
+        return _stub_results(query, max_results=max_results)
 
     try:
-        client = TavilyClient(api_key=api_key)
+        from tavily import TavilyClient
+
+        client = TavilyClient(api_key=key)
         response = client.search(
             query=query,
             max_results=max_results,
