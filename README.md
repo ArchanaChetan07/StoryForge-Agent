@@ -1,100 +1,108 @@
-# StoryForge-Agent
+# StoryForge Agent
 
-Python · multi-agent · LLM · LangChain · FastAPI · Kubernetes · Docker · MCP · CI/CD · MLOps. Repo scale: 22 files; GitHub Actions CI; automated tests; 17 Python modules. Agentic systems with tool use, orchestration, and measurable task outcomes.
+### Gemini + Tavily research agent that plans, searches, revises thin results, and drafts short-form video scripts
 
-## Results (numbers)
+[![CI](https://github.com/ArchanaChetan07/StoryForge-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/ArchanaChetan07/StoryForge-Agent/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/pytest-14%20tests-1f8a4c)](tests/)
+[![MCP](https://img.shields.io/badge/MCP-6%20tools-000000.svg)](mcp_server.py)
 
-| Metric | Value |
+Streamlit + MCP agent that turns a topic into a researched brief and optional video script. Uses a **plan → search → observe → revise → brief → (HITL) → script** loop with **4 internal tools** and **6 FastMCP tools**. Runs fully offline in **DEMO_MODE** when Gemini/Tavily keys are missing.
+
+---
+
+## Key Results
+
+| Metric | Value | Source |
+|---|---|---|
+| Internal agent tools | **4** (`search_web`, `revise_query`, `generate_brief`, `generate_script`) | `agent/tools.py` |
+| MCP tools exposed | **6** | `mcp_server.py` |
+| Python modules | **17** | git tree |
+| Unit tests | **14** | `tests/test_storyforge.py`, `test_agent_loop.py` |
+| LLM providers | Gemini (`google-generativeai`), Tavily search | `requirements.txt` |
+| UI | Streamlit | `app.py` |
+| Offline path | `DEMO_MODE` stubs in `utils/search.py`, `utils/generator.py` | `utils/config.py` |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    Q[User topic] --> P[Planner]
+    P --> SW[search_web Tavily or demo]
+    SW --> OBS{Thin results?}
+    OBS -->|yes| RV[revise_query]
+    RV --> SW
+    OBS -->|no| BR[generate_brief Gemini]
+    BR --> HITL{HITL approve?}
+    HITL -->|yes| SC[generate_script]
+    SC --> OUT[Script + trace]
+    MCP[FastMCP 6 tools] --> P
+```
+
+**How it works:** the planning loop searches the web, broadens the query deterministically when observations are thin, summarizes with Gemini (or demo text), optionally waits for human approval, then emits a short-form script with CTA lines. MCP exposes the full loop plus granular search/summarize/script endpoints.
+
+---
+
+## Tech Stack
+
+| Layer | Choice |
 |---|---|
-| Tracked repository files | **22** |
-| Python modules | **17** |
-| Notebooks | **0** |
-| Markdown docs | **1** |
-| CI workflows present | **Yes** |
-| Automated tests present | **Yes** |
-| Project highlights | **See repository artifacts for measured results.** |
+| Agent loop | Custom planner + tool registry (`agent/loop.py`) |
+| Search | Tavily API or deterministic demo hits |
+| Generation | Google Gemini via `utils/generator.py` |
+| MCP | `mcp` FastMCP stdio server |
+| UI | Streamlit |
+| Tests | pytest |
 
-## Tech stack
+---
 
-- **Primary language:** Python
-- **Languages (GitHub):** Python (46807 bytes)
-- **Focus area:** agent
-- **Tooling keywords:** Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM
+## Features
 
-## Architecture (logical)
+- Structured execution trace for debugging (`utils/tracing.py`)
+- HITL gate before script generation (bypass with `auto_approve=True`)
+- MCP tools: `research_topic`, `create_video_script`, `run_storyforge_agent`, plus low-level helpers
+- Offline CI-friendly stubs — no API keys required for pytest
+- `.env.example` documents `GEMINI_API_KEY`, `TAVILY_API_KEY`, `DEMO_MODE`
 
-\\	ext
-Inputs → Processing / models / agents → Evaluation & metrics → CI checks → Artifacts
-\
-## Engineering practices
+---
 
-1. Reproducible layout with clear module boundaries  
-2. Automated validation via CI and/or tests when present  
-3. Documentation that states measurable outcomes, not slogans  
-4. Skill surface aligned to common JD keywords: Python, machine learning, NLP/LLM, Kubernetes, Docker, observability, data pipelines  
+## Installation & Usage
 
-## Quick start
-
-\\ash
+```bash
 git clone https://github.com/ArchanaChetan07/StoryForge-Agent.git
 cd StoryForge-Agent
-# Install project requirements (see requirements.txt / pyproject.toml / environment files if present)
-# Run tests or main entrypoints documented in this repo
-\
-## Skills demonstrated
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-Python · machine-learning · CI/CD · API design · testing · automation · Docker · Kubernetes · FastAPI · Prometheus · data-science · LLM · MLOps · software-engineering · benchmarking · observability
+```bash
+# Offline tests
+pytest -q
 
-## License / notice
+# Streamlit UI
+streamlit run app.py
 
-See repository license file if present. Metrics above are derived from repository structure and previously published validation notes where available.
+# MCP server (stdio)
+mcp dev mcp_server.py
+```
 
+---
 
-### Extended notes
+## Project Structure
 
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
+```text
+StoryForge-Agent/
+├── agent/           # loop, planner, tools, HITL
+├── utils/           # search, generator, config, tracing
+├── mcp_server.py    # 6 MCP tools
+├── app.py           # Streamlit entry
+└── tests/           # 14 pytest tests
+```
 
+---
 
-### Extended notes
+## License
 
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
-
-
-### Extended notes
-
-This section expands documentation for completeness: reproducibility, keyword coverage for Python, machine-learning, CI/CD, API, Docker, Kubernetes, FastAPI, Prometheus, testing, automation, MLOps, LLM, data-science, software-engineering, benchmarking, and observability practices used across the portfolio.
+See repository license file if present.
